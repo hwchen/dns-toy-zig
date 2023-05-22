@@ -5,19 +5,25 @@ const CLASS_IN = 1;
 const RECURSION_DESIRED = 1 << 8;
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const alloc = arena.allocator();
-
+    var in_buf = try std.BoundedArray(u8, 1024).init(0);
     var rng = std.rand.DefaultPrng.init(1);
     const id = rng.random().int(u16);
+    try writeQuery(id, "google.com", TYPE_A, in_buf.writer());
 
-    var buf = std.ArrayList(u8).init(alloc);
-    defer buf.deinit();
+    const AF_INET = std.os.AF.INET;
+    const SOCK_DGRAM = std.os.SOCK.DGRAM;
+    const sock = try std.os.socket(AF_INET, SOCK_DGRAM, 0);
+    defer std.os.closeSocket(sock);
 
-    try writeQuery(id, "google.com", TYPE_A, buf.writer());
+    var addr = std.net.Address.initIp4(.{ 8, 8, 8, 8 }, 53);
+    _ = try std.os.sendto(sock, in_buf.slice(), 0, &addr.any, addr.getOsSockLen());
 
-    std.debug.print("{}\n", .{std.fmt.fmtSliceHexLower(buf.items)});
+    var addr_len = addr.getOsSockLen();
+    var out_buf: [1024]u8 = undefined;
+    const bytes_read = try std.os.recvfrom(sock, &out_buf, 0, &addr.any, &addr_len);
+    const out = out_buf[0..bytes_read];
+
+    std.debug.print("{any}", .{std.fmt.fmtSliceHexLower(out)});
 }
 
 // Returns number of bytes written
@@ -75,10 +81,9 @@ const DnsQuestion = struct {
 };
 
 test writeQuery {
-    var buf = std.ArrayList(u8).init(std.testing.allocator);
-    defer buf.deinit();
+    var buf = try std.BoundedArray(u8, 1024).init(0);
 
     try writeQuery(0x8298, "www.example.com", TYPE_A, buf.writer());
     var out_buf: [1024]u8 = undefined;
-    try std.testing.expectEqualSlices(u8, buf.items, try std.fmt.hexToBytes(&out_buf, "82980100000100000000000003777777076578616d706c6503636f6d0000010001"));
+    try std.testing.expectEqualSlices(u8, buf.slice(), try std.fmt.hexToBytes(&out_buf, "82980100000100000000000003777777076578616d706c6503636f6d0000010001"));
 }
