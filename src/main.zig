@@ -45,6 +45,14 @@ fn writeQuery(id: u16, domain_name: []const u8, record_type: u16, wtr: anytype) 
     try question.write_bytes(wtr);
 }
 
+test "write query" {
+    var buf = try std.BoundedArray(u8, 1024).init(0);
+
+    try writeQuery(0x8298, "www.example.com", TYPE_A, buf.writer());
+    var expected_buf: [1024]u8 = undefined;
+    try std.testing.expectEqualSlices(u8, buf.slice(), try std.fmt.hexToBytes(&expected_buf, "82980100000100000000000003777777076578616d706c6503636f6d0000010001"));
+}
+
 const DnsHeader = struct {
     id: u16,
     flags: u16,
@@ -74,6 +82,13 @@ const DnsHeader = struct {
     }
 };
 
+test "parse header" {
+    const response = "`V\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00\x03www\x07example\x03com\x00\x00\x01\x00\x01\xc0\x0c\x00\x01\x00\x01\x00\x00R\x9b\x00\x04]\xb8\xd8";
+    var resp_stream = std.io.fixedBufferStream(response);
+    const actual = try DnsHeader.from_reader(resp_stream.reader());
+    try std.testing.expectEqual(actual, DnsHeader{ .id = 24662, .flags = 33152, .num_questions = 1, .num_answers = 1, .num_authorities = 0, .num_additionals = 0 });
+}
+
 const DnsQuestion = struct {
     name: []const u8,
     type: u16,
@@ -92,18 +107,3 @@ const DnsQuestion = struct {
         try wtr.writeIntBig(u16, self.class);
     }
 };
-
-test "write query" {
-    var buf = try std.BoundedArray(u8, 1024).init(0);
-
-    try writeQuery(0x8298, "www.example.com", TYPE_A, buf.writer());
-    var expected_buf: [1024]u8 = undefined;
-    try std.testing.expectEqualSlices(u8, buf.slice(), try std.fmt.hexToBytes(&expected_buf, "82980100000100000000000003777777076578616d706c6503636f6d0000010001"));
-}
-
-test "parse header" {
-    const response = "`V\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00\x03www\x07example\x03com\x00\x00\x01\x00\x01\xc0\x0c\x00\x01\x00\x01\x00\x00R\x9b\x00\x04]\xb8\xd8";
-    var resp_stream = std.io.fixedBufferStream(response);
-    const actual = try DnsHeader.from_reader(resp_stream.reader());
-    try std.testing.expectEqual(actual, DnsHeader{ .id = 24662, .flags = 33152, .num_questions = 1, .num_answers = 1, .num_authorities = 0, .num_additionals = 0 });
-}
