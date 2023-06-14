@@ -1,11 +1,14 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+const ArrayList = std.ArrayList;
+const BoundedArray = std.BoundedArray;
 
 const TYPE_A = 1;
 const CLASS_IN = 1;
 const RECURSION_DESIRED = 1 << 8;
 
 pub fn main() !void {
-    var in_buf = try std.BoundedArray(u8, 1024).init(0);
+    var in_buf = try BoundedArray(u8, 1024).init(0);
     var rng = std.rand.DefaultPrng.init(1);
     const id = rng.random().int(u16);
     try writeQuery(id, "google.com", TYPE_A, in_buf.writer());
@@ -106,4 +109,34 @@ const DnsQuestion = struct {
         try wtr.writeIntBig(u16, self.type);
         try wtr.writeIntBig(u16, self.class);
     }
+
+    // returns an owned slice. Needs to be freed by caller (which should be the DnsQuestion struct)
+    fn parse_domain_name(alloc: Allocator, rdr: anytype) ![]const u8 {
+        var buf = ArrayList(u8).init(alloc);
+        var wtr = buf.writer();
+
+        const part_len_first = try rdr.readByte();
+        if (part_len_first == 0) return buf.toOwnedSlice();
+        for (0..part_len_first) |_| {
+            try wtr.writeByte(try rdr.readByte());
+        }
+
+        while (true) {
+            const part_len = try rdr.readByte();
+            if (part_len == 0) break;
+            try wtr.writeByte('.');
+            for (0..part_len) |_| {
+                try wtr.writeByte(try rdr.readByte());
+            }
+        }
+
+        return buf.toOwnedSlice();
+    }
 };
+
+test "parse domain name" {
+    var input = std.io.fixedBufferStream("\x03www\x07example\x03com\x00\x00\x01\x00\x01");
+    const actual = try DnsQuestion.parse_domain_name(std.testing.allocator, input.reader());
+    defer std.testing.allocator.free(actual);
+    try std.testing.expectEqualSlices(u8, actual, "www.example.com");
+}
