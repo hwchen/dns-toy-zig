@@ -145,6 +145,42 @@ const DnsQuestion = struct {
     }
 };
 
+const DnsRecord = struct {
+    name: []const u8,
+    type: u16,
+    class: u16,
+    ttl: u32,
+    data: []const u8,
+
+    /// pass the same allocator that was used for creation (i.e. using from_reader)
+    fn deinit(self: DnsRecord, alloc: Allocator) void {
+        alloc.free(self.name);
+        alloc.free(self.data);
+    }
+
+    fn from_reader(alloc: Allocator, rdr: anytype) !DnsRecord {
+        const name = try DnsQuestion.parse_domain_name(alloc, rdr);
+        const _type = try rdr.readIntBig(u16);
+        const class = try rdr.readIntBig(u16);
+        const ttl = try rdr.readIntBig(u32);
+        const data_len = try rdr.readIntBig(u16);
+
+        var data = ArrayList(u8).init(alloc);
+        var wtr = data.writer();
+        for (0..data_len) |_| {
+            try wtr.writeByte(try rdr.readByte());
+        }
+
+        return DnsRecord{
+            .name = name,
+            .type = _type,
+            .class = class,
+            .ttl = ttl,
+            .data = try data.toOwnedSlice(),
+        };
+    }
+};
+
 test "parse response" {
     const alloc = std.testing.allocator;
     const response = "`V\x81\x80\x00\x01\x00\x01\x00\x00\x00\x00\x03www\x07example\x03com\x00\x00\x01\x00\x01\xc0\x0c\x00\x01\x00\x01\x00\x00R\x9b\x00\x04]\xb8\xd8";
@@ -158,6 +194,13 @@ test "parse response" {
     try expectEqualSlices(u8, question.name, "www.example.com");
     try expectEqual(question.type, 1);
     try expectEqual(question.class, 1);
+
+    const record = try DnsRecord.from_reader(alloc, resp_rdr);
+    defer record.deinit(alloc);
+    try expectEqualSlices(u8, record.name, "www.example.com");
+    try expectEqual(question.type, 1);
+    try expectEqual(question.class, 1);
+    try expectEqualSlices(u8, record.data, "\xb8\xb8");
 }
 
 test "parse domain name" {
